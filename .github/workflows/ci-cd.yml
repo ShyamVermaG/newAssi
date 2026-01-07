@@ -1,0 +1,37 @@
+name:Testing
+
+jobs:
+  testing1:
+    runs-on:ubuntu-latest
+
+
+    steps:
+      run: |
+        echo "Checking disk usage before cleanup..."
+        df -h /
+
+        # Get disk usage percentage (without % sign)
+        DISK_USAGE=$(df / | tail -1 | awk '{print $5}' | sed 's/%//')
+
+        echo "Current disk usage: ${DISK_USAGE}%"
+
+        # Cleanup only if disk usage is above 80%
+        if [ "$DISK_USAGE" -gt 80 ]; then
+          echo "Disk usage above 80%. Performing cleanup..."
+
+        sudo rm -rf /usr/local/lib/android || true
+        sudo rm -rf /usr/share/dotnet || true
+
+          if command -v docker >/dev/null 2>&1; then
+            docker system prune -af || true
+          else
+            echo "Docker not installed, skipping Docker cleanup"
+          fi
+    
+      else
+        echo "Disk usage below threshold. Skipping cleanup."
+      fi
+
+      echo "Checking disk usage after cleanup..."
+      df -h /
+
