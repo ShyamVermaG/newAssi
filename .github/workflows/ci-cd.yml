@@ -1,37 +1,71 @@
-name:Testing
+name: Disk Check and Safe Cleanup
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  testing1:
-    runs-on:ubuntu-latest
-
+  disk-check:
+    runs-on: ubuntu-latest
 
     steps:
-      run: |
-        echo "Checking disk usage before cleanup..."
-        df -h /
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-        # Get disk usage percentage (without % sign)
-        DISK_USAGE=$(df / | tail -1 | awk '{print $5}' | sed 's/%//')
+      - name: Check disk usage and cleanup safely
+        id: disk_check
+        run: |
+          echo "Disk usage BEFORE cleanup"
+          df -h /
 
-        echo "Current disk usage: ${DISK_USAGE}%"
+          DISK_USAGE=$(df / | tail -1 | awk '{print $5}' | sed 's/%//')
+          echo "Disk usage is ${DISK_USAGE}%"
 
-        # Cleanup only if disk usage is above 80%
-        if [ "$DISK_USAGE" -gt 80 ]; then
-          echo "Disk usage above 80%. Performing cleanup..."
+          # Save value for next steps
+          echo "disk_usage=${DISK_USAGE}" >> $GITHUB_OUTPUT
 
-        sudo rm -rf /usr/local/lib/android || true
-        sudo rm -rf /usr/share/dotnet || true
+          if [ "$DISK_USAGE" -gt 80 ]; then
+            echo "High disk usage detected. Running cleanup..."
 
-          if command -v docker >/dev/null 2>&1; then
-            docker system prune -af || true
+            sudo rm -rf /usr/local/lib/android || true
+            sudo rm -rf /usr/share/dotnet || true
+
+            if command -v docker >/dev/null 2>&1; then
+              docker system prune -af || true
+            fi
           else
-            echo "Docker not installed, skipping Docker cleanup"
+            echo "Disk usage below threshold. Cleanup skipped."
           fi
-    
-      else
-        echo "Disk usage below threshold. Skipping cleanup."
-      fi
 
-      echo "Checking disk usage after cleanup..."
-      df -h /
+          echo "Disk usage AFTER cleanup"
+          df -h /
 
+      # Slack alert (only if disk usage is high)
+      - name: Slack alert for high disk usage
+        if: steps.disk_check.outputs.disk_usage > 80
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{
+            "text": ":warning: CI Disk Usage Alert\nDisk usage is '${{ steps.disk_check.outputs.disk_usage }}'% on GitHub runner.\nCleanup executed."
+          }' \
+          ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      # Email alert (only if disk usage is high)
+      - name: Email alert for high disk usage
+        if: steps.disk_check.outputs.disk_usage > 80
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "CI Alert: High Disk Usage"
+          body: |
+            Disk usage exceeded 80% on the CI runner.
+
+            Current usage: ${{ steps.disk_check.outputs.disk_usage }}%
+
+            Cleanup was executed automatically.
+          to: your-email@example.com
+          from: CI Pipeline <ci@example.com>
